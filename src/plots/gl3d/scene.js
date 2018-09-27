@@ -41,7 +41,7 @@ function render(scene) {
     svgContainer.setAttributeNS(null, 'viewBox', '0 0 ' + width + ' ' + height);
     svgContainer.setAttributeNS(null, 'width', width);
     svgContainer.setAttributeNS(null, 'height', height);
-
+    
     computeTickMarks(scene);
     scene.glplot.axes.update(scene.axesOptions);
 
@@ -383,6 +383,32 @@ function computeTraceBounds(scene, trace, bounds) {
     }
 }
 
+
+function isCloseToZero (a) {
+    if (Math.abs(a) > Number.MIN_VALUE) { // the smallest positive numeric value representable in JavaScript
+        return false;
+    }
+    return true;
+}
+
+function getAxisDirection (a) {
+    if (a) { 
+
+        if (a.autorange === 'reversed') { 
+          return -1; 
+        } 
+        
+        if (a.range) { 
+            if (a.range.length > 1) { 
+                if (a.range[0] > a.range[1]) {
+                    return -1;
+                } 
+            } 
+        }
+    }
+    return 1;
+}
+
 proto.plot = function(sceneData, fullLayout, layout) {
 
     // Save parameters
@@ -399,7 +425,7 @@ proto.plot = function(sceneData, fullLayout, layout) {
     else this.glplot.clearColor = [0, 0, 0, 0];
 
     this.glplot.snapToData = true;
-
+    
     // Update layout
     this.fullLayout = fullLayout;
     this.fullSceneLayout = fullSceneLayout;
@@ -421,7 +447,7 @@ proto.plot = function(sceneData, fullLayout, layout) {
     // Convert scene data
     if(!sceneData) sceneData = [];
     else if(!Array.isArray(sceneData)) sceneData = [sceneData];
-
+    
     // Compute trace bounding box
     var dataBounds = [
         [Infinity, Infinity, Infinity],
@@ -435,19 +461,10 @@ proto.plot = function(sceneData, fullLayout, layout) {
     }
     var dataScale = [1, 1, 1];
     for(j = 0; j < 3; ++j) {
-        if(dataBounds[0][j] > dataBounds[1][j]) {
-            dataScale[j] = 1.0;
-        }
-        else {
-            if(dataBounds[1][j] === dataBounds[0][j]) {
-                dataScale[j] = 1.0;
-            }
-            else {
-                dataScale[j] = 1.0 / (dataBounds[1][j] - dataBounds[0][j]);
-            }
-        }
+        var diff = dataBounds[1][j] - dataBounds[0][j];
+        if(isCloseToZero(diff) === false) dataScale[j] = 1.0 / diff;
     }
-
+    
     // Save scale
     this.dataScale = dataScale;
 
@@ -496,94 +513,108 @@ proto.plot = function(sceneData, fullLayout, layout) {
         return a._trace.data.index - b._trace.data.index;
     });
 
+    var signAx = [
+        getAxisDirection(fullSceneLayout.xaxis),
+        getAxisDirection(fullSceneLayout.yaxis),
+        getAxisDirection(fullSceneLayout.zaxis)
+      ];    
+
     // Update ranges (needs to be called *after* objects are added due to updates)
     var sceneBounds = [[0, 0, 0], [0, 0, 0]],
-        axisDataRange = [],
         axisTypeRatios = {};
 
-    for(i = 0; i < 3; ++i) {
-        axis = fullSceneLayout[axisProperties[i]];
+    for(j = 0; j < 3; ++j) {
+        axis = fullSceneLayout[axisProperties[j]];
         axisType = axis.type;
 
         if(axisType in axisTypeRatios) {
-            axisTypeRatios[axisType].acc *= dataScale[i];
+            axisTypeRatios[axisType].acc *= dataScale[j];
             axisTypeRatios[axisType].count += 1;
         }
         else {
             axisTypeRatios[axisType] = {
-                acc: dataScale[i],
+                acc: dataScale[j],
                 count: 1
             };
         }
 
         if(axis.autorange) {
-            sceneBounds[0][i] = Infinity;
-            sceneBounds[1][i] = -Infinity;
+            sceneBounds[0][j] = Infinity;
+            sceneBounds[1][j] = -Infinity;
 
             var objects = this.glplot.objects;
             var annotations = this.fullSceneLayout.annotations || [];
             var axLetter = axis._name.charAt(0);
 
-            for(j = 0; j < objects.length; j++) {
-                var obj = objects[j];
+            for(i = 0; i < objects.length; i++) {
+                var obj = objects[i];
                 var objBounds = obj.bounds;
                 var pad = obj._trace.data._pad || 0;
 
                 if(obj.constructor.name === 'ErrorBars' && axis._lowerLogErrorBound) {
-                    sceneBounds[0][i] = Math.min(sceneBounds[0][i], axis._lowerLogErrorBound);
+                    sceneBounds[0][j] = Math.min(sceneBounds[0][j], axis._lowerLogErrorBound);
                 } else {
-                    sceneBounds[0][i] = Math.min(sceneBounds[0][i], objBounds[0][i] / dataScale[i] - pad);
+                    sceneBounds[0][j] = Math.min(sceneBounds[0][j], objBounds[0][j] / dataScale[j] - pad);
                 }
-                sceneBounds[1][i] = Math.max(sceneBounds[1][i], objBounds[1][i] / dataScale[i] + pad);
+                sceneBounds[1][j] = Math.max(sceneBounds[1][j], objBounds[1][j] / dataScale[j] + pad);
             }
 
-            for(j = 0; j < annotations.length; j++) {
-                var ann = annotations[j];
+            for(i = 0; i < annotations.length; i++) {
+                var ann = annotations[i];
 
                 // N.B. not taking into consideration the arrowhead
                 if(ann.visible) {
                     var pos = axis.r2l(ann[axLetter]);
-                    sceneBounds[0][i] = Math.min(sceneBounds[0][i], pos);
-                    sceneBounds[1][i] = Math.max(sceneBounds[1][i], pos);
+                    sceneBounds[0][j] = Math.min(sceneBounds[0][j], pos);
+                    sceneBounds[1][j] = Math.max(sceneBounds[1][j], pos);
                 }
             }
 
             if('rangemode' in axis && axis.rangemode === 'tozero') {
-                sceneBounds[0][i] = Math.min(sceneBounds[0][i], 0);
-                sceneBounds[1][i] = Math.max(sceneBounds[1][i], 0);
+                sceneBounds[0][j] = Math.min(sceneBounds[0][j], 0);
+                sceneBounds[1][j] = Math.max(sceneBounds[1][j], 0);
             }
-            if(sceneBounds[0][i] > sceneBounds[1][i]) {
-                sceneBounds[0][i] = -1;
-                sceneBounds[1][i] = 1;
+            if(sceneBounds[0][j] > sceneBounds[1][j]) {
+                sceneBounds[0][j] = -1;
+                sceneBounds[1][j] = 1;
             } else {
-                var d = sceneBounds[1][i] - sceneBounds[0][i];
-                sceneBounds[0][i] -= d / 32.0;
-                sceneBounds[1][i] += d / 32.0;
+                var d = sceneBounds[1][j] - sceneBounds[0][j];
+                sceneBounds[0][j] -= d / 32.0;
+                sceneBounds[1][j] += d / 32.0;
             }
         } else {
             var range = axis.range;
-            sceneBounds[0][i] = axis.r2l(range[0]);
-            sceneBounds[1][i] = axis.r2l(range[1]);
+            sceneBounds[0][j] = axis.r2l(range[0]);
+            sceneBounds[1][j] = axis.r2l(range[1]);
         }
-        if(sceneBounds[0][i] === sceneBounds[1][i]) {
-            sceneBounds[0][i] -= 1;
-            sceneBounds[1][i] += 1;
+        
+        if(isCloseToZero(sceneBounds[0][j] - sceneBounds[1][j])) {
+            sceneBounds[0][j] -= 1;
+            sceneBounds[1][j] += 1;
         }
-        axisDataRange[i] = sceneBounds[1][i] - sceneBounds[0][i];
-
+        
         // Update plot bounds
-        this.glplot.bounds[0][i] = sceneBounds[0][i] * dataScale[i];
-        this.glplot.bounds[1][i] = sceneBounds[1][i] * dataScale[i];
+        this.glplot.bounds[0][j] = sceneBounds[0][j] * dataScale[j];
+        this.glplot.bounds[1][j] = sceneBounds[1][j] * dataScale[j];
+        
+        // swap bounds if the reverse direction requested
+        if (signAx[j] === -1) {
+            if (this.glplot.bounds[0][j] < this.glplot.bounds[1][j]) {
+                var tmp = this.glplot.bounds[0][j];
+                this.glplot.bounds[0][j] = this.glplot.bounds[1][j];
+                this.glplot.bounds[1][j] = tmp;
+            }
+        }        
     }
-
+    
     var axesScaleRatio = [1, 1, 1];
-
+    
     // Compute axis scale per category
-    for(i = 0; i < 3; ++i) {
-        axis = fullSceneLayout[axisProperties[i]];
+    for(j = 0; j < 3; ++j) {
+        axis = fullSceneLayout[axisProperties[j]];
         axisType = axis.type;
         var axisRatio = axisTypeRatios[axisType];
-        axesScaleRatio[i] = Math.pow(axisRatio.acc, 1.0 / axisRatio.count) / dataScale[i];
+        axesScaleRatio[j] = Math.pow(axisRatio.acc, 1.0 / axisRatio.count) / (dataScale[j] * signAx[j]);
     }
 
     /*

@@ -19,6 +19,7 @@ function AxesOptions() {
         [-10, -10, -10],
         [10, 10, 10]
     ];
+    this.signAx = [1, 1, 1];
 
     this.ticks = [ [], [], [] ];
     this.tickEnable = [ true, true, true ];
