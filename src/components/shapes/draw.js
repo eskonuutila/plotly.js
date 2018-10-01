@@ -127,6 +127,10 @@ function setClipPath(shapePath, gd, shapeOptions) {
 }
 
 function setupDragElement(gd, shapePath, shapeOptions, index, shapeLayer) {
+    // console.log('setupDragElement', shapePath, shapeOptions, index, shapeLayer);
+    if (!shapeOptions.editable) {
+	return;
+    }
     var MINWIDTH = 10;
     var MINHEIGHT = 10;
 

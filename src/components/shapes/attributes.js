@@ -15,6 +15,17 @@ var extendFlat = require('../../lib/extend').extendFlat;
 var templatedArray = require('../../plot_api/plot_template').templatedArray;
 
 module.exports = templatedArray('shape', {
+    editable: {
+        valType: 'boolean',
+        role: 'info',
+        dflt: true,
+        editType: 'calc+arraydraw',
+        description: [
+            'Determines whether or not this shape is editable, when the plot is editable.'
+        ].join(' ')
+    },
+
+
     visible: {
         valType: 'boolean',
         role: 'info',
