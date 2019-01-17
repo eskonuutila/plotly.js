@@ -1,5 +1,5 @@
 /**
-* Copyright 2012-2018, Plotly, Inc.
+* Copyright 2012-2019, Plotly, Inc.
 * All rights reserved.
 *
 * This source code is licensed under the MIT license found in the
@@ -27,7 +27,7 @@ var scatterCalc = require('../scatter/calc');
 var calcMarkerSize = scatterCalc.calcMarkerSize;
 var calcAxisExpansion = scatterCalc.calcAxisExpansion;
 var setFirstScatter = scatterCalc.setFirstScatter;
-var calcColorscales = require('../scatter/colorscale_calc');
+var calcColorscale = require('../scatter/colorscale_calc');
 var linkTraces = require('../scatter/link_traces');
 var getTraceColor = require('../scatter/get_trace_color');
 var fillHoverText = require('../scatter/fill_hover_text');
@@ -42,8 +42,8 @@ function calc(gd, trace) {
     var xa = AxisIDs.getFromId(gd, trace.xaxis);
     var ya = AxisIDs.getFromId(gd, trace.yaxis);
     var subplot = fullLayout._plots[trace.xaxis + trace.yaxis];
-    var count = trace._length;
-    var count2 = count * 2;
+    var len = trace._length;
+    var len2 = len * 2;
     var stash = {};
     var i, xx, yy;
 
@@ -52,8 +52,8 @@ function calc(gd, trace) {
 
     // we need hi-precision for scatter2d,
     // regl-scatter2d uses NaNs for bad/missing values
-    var positions = new Array(count2);
-    for(i = 0; i < count; i++) {
+    var positions = new Array(len2);
+    for(i = 0; i < len; i++) {
         xx = x[i];
         yy = y[i];
         positions[i * 2] = xx === BADNUM ? NaN : xx;
@@ -61,12 +61,12 @@ function calc(gd, trace) {
     }
 
     if(xa.type === 'log') {
-        for(i = 0; i < count2; i += 2) {
+        for(i = 0; i < len2; i += 2) {
             positions[i] = xa.c2l(positions[i]);
         }
     }
     if(ya.type === 'log') {
-        for(i = 1; i < count2; i += 2) {
+        for(i = 1; i < len2; i += 2) {
             positions[i] = ya.c2l(positions[i]);
         }
     }
@@ -77,14 +77,14 @@ function calc(gd, trace) {
         // FIXME: delegate this to webworker
         stash.tree = cluster(positions);
     } else {
-        var ids = stash.ids = new Array(count);
-        for(i = 0; i < count; i++) {
+        var ids = stash.ids = new Array(len);
+        for(i = 0; i < len; i++) {
             ids[i] = i;
         }
     }
 
     // create scene options and scene
-    calcColorscales(trace);
+    calcColorscale(gd, trace);
     var opts = sceneOptions(gd, subplot, trace, positions, x, y);
     var scene = sceneUpdate(gd, subplot);
 
@@ -93,8 +93,8 @@ function calc(gd, trace) {
     // use average marker size instead to speed things up.
     setFirstScatter(fullLayout, trace);
     var ppad;
-    if(count < TOO_MANY_POINTS) {
-        ppad = calcMarkerSize(trace, count);
+    if(len < TOO_MANY_POINTS) {
+        ppad = calcMarkerSize(trace, len);
     } else if(opts.marker) {
         ppad = 2 * (opts.marker.sizeAvg || Math.max(opts.marker.size, 3));
     }
@@ -111,7 +111,7 @@ function calc(gd, trace) {
 
     // FIXME: organize it in a more appropriate manner, probably in sceneOptions
     // put point-cluster instance for optimized regl calc
-    if(opts.marker && count >= TOO_MANY_POINTS) {
+    if(opts.marker && len >= TOO_MANY_POINTS) {
         opts.marker.cluster = stash.tree;
     }
 
@@ -133,8 +133,6 @@ function calc(gd, trace) {
     stash.x = x;
     stash.y = y;
     stash.positions = positions;
-    stash.count = count;
-
     scene.count++;
 
     return [{x: false, y: false, t: stash, trace: trace}];
@@ -295,13 +293,15 @@ function sceneUpdate(gd, subplot) {
 
         // remove scene resources
         scene.destroy = function destroy() {
-            if(scene.fill2d) scene.fill2d.destroy();
-            if(scene.scatter2d) scene.scatter2d.destroy();
-            if(scene.error2d) scene.error2d.destroy();
-            if(scene.line2d) scene.line2d.destroy();
-            if(scene.select2d) scene.select2d.destroy();
+            if(scene.fill2d && scene.fill2d.destroy) scene.fill2d.destroy();
+            if(scene.scatter2d && scene.scatter2d.destroy) scene.scatter2d.destroy();
+            if(scene.error2d && scene.error2d.destroy) scene.error2d.destroy();
+            if(scene.line2d && scene.line2d.destroy) scene.line2d.destroy();
+            if(scene.select2d && scene.select2d.destroy) scene.select2d.destroy();
             if(scene.glText) {
-                scene.glText.forEach(function(text) { text.destroy(); });
+                scene.glText.forEach(function(text) {
+                    if(text.destroy) text.destroy();
+                });
             }
 
             scene.lineOptions = null;
@@ -398,18 +398,17 @@ function plot(gd, subplot, cdata) {
             scene.line2d.update(scene.lineOptions);
             scene.lineOptions = scene.lineOptions.map(function(lineOptions) {
                 if(lineOptions && lineOptions.positions) {
-                    var pos = [], srcPos = lineOptions.positions;
+                    var srcPos = lineOptions.positions;
 
                     var firstptdef = 0;
-                    while(isNaN(srcPos[firstptdef]) || isNaN(srcPos[firstptdef + 1])) {
+                    while(firstptdef < srcPos.length && (isNaN(srcPos[firstptdef]) || isNaN(srcPos[firstptdef + 1]))) {
                         firstptdef += 2;
                     }
                     var lastptdef = srcPos.length - 2;
-                    while(isNaN(srcPos[lastptdef]) || isNaN(srcPos[lastptdef + 1])) {
-                        lastptdef += -2;
+                    while(lastptdef > firstptdef && (isNaN(srcPos[lastptdef]) || isNaN(srcPos[lastptdef + 1]))) {
+                        lastptdef -= 2;
                     }
-                    pos = pos.concat(srcPos.slice(firstptdef, lastptdef + 2));
-                    lineOptions.positions = pos;
+                    lineOptions.positions = srcPos.slice(firstptdef, lastptdef + 2);
                 }
                 return lineOptions;
             });
@@ -440,36 +439,38 @@ function plot(gd, subplot, cdata) {
                 if(trace._nexttrace) fillData.push(i + 1);
                 if(fillData.length) scene.fillOrder[i] = fillData;
 
-                var pos = [], srcPos = (lineOptions && lineOptions.positions) || stash.positions;
+                var pos = [];
+                var srcPos = (lineOptions && lineOptions.positions) || stash.positions;
+                var firstptdef, lastptdef;
 
                 if(trace.fill === 'tozeroy') {
-                    var firstpdef = 0;
-                    while(isNaN(srcPos[firstpdef + 1])) {
-                        firstpdef += 2;
+                    firstptdef = 0;
+                    while(firstptdef < srcPos.length && isNaN(srcPos[firstptdef + 1])) {
+                        firstptdef += 2;
                     }
-                    var lastpdef = srcPos.length - 2;
-                    while(isNaN(srcPos[lastpdef + 1])) {
-                        lastpdef += -2;
+                    lastptdef = srcPos.length - 2;
+                    while(lastptdef > firstptdef && isNaN(srcPos[lastptdef + 1])) {
+                        lastptdef -= 2;
                     }
-                    if(srcPos[firstpdef + 1] !== 0) {
-                        pos = [ srcPos[firstpdef], 0 ];
+                    if(srcPos[firstptdef + 1] !== 0) {
+                        pos = [srcPos[firstptdef], 0];
                     }
-                    pos = pos.concat(srcPos.slice(firstpdef, lastpdef + 2));
-                    if(srcPos[lastpdef + 1] !== 0) {
-                        pos = pos.concat([ srcPos[lastpdef], 0 ]);
+                    pos = pos.concat(srcPos.slice(firstptdef, lastptdef + 2));
+                    if(srcPos[lastptdef + 1] !== 0) {
+                        pos = pos.concat([srcPos[lastptdef], 0]);
                     }
                 }
                 else if(trace.fill === 'tozerox') {
-                    var firstptdef = 0;
-                    while(isNaN(srcPos[firstptdef])) {
+                    firstptdef = 0;
+                    while(firstptdef < srcPos.length && isNaN(srcPos[firstptdef])) {
                         firstptdef += 2;
                     }
-                    var lastptdef = srcPos.length - 2;
-                    while(isNaN(srcPos[lastptdef])) {
-                        lastptdef += -2;
+                    lastptdef = srcPos.length - 2;
+                    while(lastptdef > firstptdef && isNaN(srcPos[lastptdef])) {
+                        lastptdef -= 2;
                     }
                     if(srcPos[firstptdef] !== 0) {
-                        pos = [ 0, srcPos[firstptdef + 1] ];
+                        pos = [0, srcPos[firstptdef + 1]];
                     }
                     pos = pos.concat(srcPos.slice(firstptdef, lastptdef + 2));
                     if(srcPos[lastptdef] !== 0) {
@@ -503,7 +504,8 @@ function plot(gd, subplot, cdata) {
                                 pos = srcPos.slice();
 
                                 for(i = Math.floor(nextPos.length / 2); i--;) {
-                                    var xx = nextPos[i * 2], yy = nextPos[i * 2 + 1];
+                                    var xx = nextPos[i * 2];
+                                    var yy = nextPos[i * 2 + 1];
                                     if(isNaN(xx) || isNaN(yy)) continue;
                                     pos.push(xx, yy);
                                 }
@@ -554,6 +556,7 @@ function plot(gd, subplot, cdata) {
         var trace = cd0.trace;
         var stash = cd0.t;
         var index = stash.index;
+        var len = trace._length;
         var x = stash.x;
         var y = stash.y;
 
@@ -574,7 +577,7 @@ function plot(gd, subplot, cdata) {
                     selDict[selPts[j]] = 1;
                 }
                 var unselPts = [];
-                for(j = 0; j < stash.count; j++) {
+                for(j = 0; j < len; j++) {
                     if(!selDict[j]) unselPts.push(j);
                 }
                 scene.unselectBatch[index] = unselPts;
@@ -585,9 +588,9 @@ function plot(gd, subplot, cdata) {
             // - spin that in a webworker
             // - compute selection from polygons in data coordinates
             //   (maybe just for linear axes)
-            var xpx = stash.xpx = new Array(stash.count);
-            var ypx = stash.ypx = new Array(stash.count);
-            for(j = 0; j < stash.count; j++) {
+            var xpx = stash.xpx = new Array(len);
+            var ypx = stash.ypx = new Array(len);
+            for(j = 0; j < len; j++) {
                 xpx[j] = xaxis.c2p(x[j]);
                 ypx[j] = yaxis.c2p(y[j]);
             }
@@ -814,6 +817,11 @@ function calcHover(pointData, x, y, trace) {
         di.hi = Array.isArray(hoverinfo) ? hoverinfo[id] : hoverinfo;
     }
 
+    var hovertemplate = trace.hovertemplate;
+    if(hovertemplate) {
+        di.ht = Array.isArray(hovertemplate) ? hovertemplate[id] : hovertemplate;
+    }
+
     var fakeCd = {};
     fakeCd[pointData.index] = di;
 
@@ -830,7 +838,9 @@ function calcHover(pointData, x, y, trace) {
 
         cd: fakeCd,
         distance: minDist,
-        spikeDistance: dxy
+        spikeDistance: dxy,
+
+        hovertemplate: di.ht
     });
 
     if(di.htx) pointData.text = di.htx;
@@ -849,6 +859,7 @@ function selectPoints(searchInfo, selectionTester) {
     var selection = [];
     var trace = cd[0].trace;
     var stash = cd[0].t;
+    var len = trace._length;
     var x = stash.x;
     var y = stash.y;
     var scene = stash._scene;
@@ -868,7 +879,7 @@ function selectPoints(searchInfo, selectionTester) {
     var i;
     if(selectionTester !== false && !selectionTester.degenerate) {
         els = [], unels = [];
-        for(i = 0; i < stash.count; i++) {
+        for(i = 0; i < len; i++) {
             if(selectionTester.contains([stash.xpx[i], stash.ypx[i]], false, i, searchInfo)) {
                 els.push(i);
                 selection.push({
@@ -882,7 +893,7 @@ function selectPoints(searchInfo, selectionTester) {
             }
         }
     } else {
-        unels = arrayRange(stash.count);
+        unels = arrayRange(len);
     }
 
     // make sure selectBatch is created
@@ -916,6 +927,7 @@ function selectPoints(searchInfo, selectionTester) {
 
 function styleTextSelection(cd) {
     var cd0 = cd[0];
+    var trace = cd0.trace;
     var stash = cd0.t;
     var scene = stash._scene;
     var index = stash.index;
@@ -932,8 +944,7 @@ function styleTextSelection(cd) {
         var utc = unselOpts.color;
         var base = baseOpts.color;
         var hasArrayBase = Array.isArray(base);
-        opts.color = new Array(stash.count);
-
+        opts.color = new Array(trace._length);
 
         for(i = 0; i < els.length; i++) {
             j = els[i];
@@ -965,7 +976,6 @@ module.exports = {
     hoverPoints: hoverPoints,
     selectPoints: selectPoints,
 
-    sceneOptions: sceneOptions,
     sceneUpdate: sceneUpdate,
     calcHover: calcHover,
 
